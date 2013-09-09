@@ -65,7 +65,7 @@ public class GradebookExportByTerm implements Job {
 	
 	public void execute(JobExecutionContext jobExecutionContext) throws JobExecutionException {
 		
-		log.info(JOB_NAME + "started: " + getDateAsString(DATE_FORMAT_TIMESTAMP));
+		log.info(JOB_NAME + " started.");
 		
 		//get admin session
 		establishSession(JOB_NAME);
@@ -82,7 +82,7 @@ public class GradebookExportByTerm implements Job {
 		}
 		
 		
-		log.info(JOB_NAME + " ended: " + getDateAsString(DATE_FORMAT_TIMESTAMP));
+		log.info(JOB_NAME + " ended.");
 	}
 	
 	
@@ -365,22 +365,6 @@ public class GradebookExportByTerm implements Job {
 	    eventTrackingService.post(eventTrackingService.newEvent(UsageSessionService.EVENT_LOGIN, null, true));
 	}
 	
-	/**
-	 * Get the current date as a string in the specified format
-	 * @return
-	 */
-	private String getDateAsString(String format) {
-		return getDateAsString(Calendar.getInstance().getTime(), format);
-	}
-	
-	/**
-	 * Get the given date as a string in the specified format
-	 * @return
-	 */
-	private String getDateAsString(Date date, String format) {
-		SimpleDateFormat dateFormat = new SimpleDateFormat(format);
-		return dateFormat.format(date);
-	}
 	
 	/**
 	 * Get configurable output path. Defaults to /tmp
@@ -491,11 +475,15 @@ public class GradebookExportByTerm implements Job {
 		
 		System.out.println("terms: " + sessions.size());
 
+		if(sessions.isEmpty()) {
+			return null;
+		}
+				
 		for(AcademicSession as: sessions) {
 			System.out.println("term: " + as.getEid());
 		}
 		
-		return sessions.get(sessions.size()).getEid();
+		return sessions.get(sessions.size()-1).getEid();
 
 	}
 	
