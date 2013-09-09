@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE beans PUBLIC "-//SPRING//DTD BEAN//EN"
+	"http://www.springframework.org/dtd/spring-beans.dtd">
+
+<beans>
+	
+	
+	<bean id="org.sakaiproject.gradebook.jobs.GradebookExportByTerm"
+		class="org.sakaiproject.gradebook.jobs.GradebookExportByTerm">
+		
+		<property name="sessionManager" ref="org.sakaiproject.tool.api.SessionManager" />
+		<property name="siteService" ref="org.sakaiproject.site.api.SiteService" />
+		<property name="usageSessionService" ref="org.sakaiproject.event.api.UsageSessionService" />
+		<property name="eventTrackingService" ref="org.sakaiproject.event.api.EventTrackingService" />
+		<property name="authzGroupService" ref="org.sakaiproject.authz.api.AuthzGroupService" />
+		<property name="serverConfigurationService" ref="org.sakaiproject.component.api.ServerConfigurationService" />
+		<property name="userDirectoryService" ref="org.sakaiproject.user.api.UserDirectoryService" />
+		<property name="courseManagementService" ref="org.sakaiproject.coursemanagement.api.CourseManagementService" />
+		<property name="gradebookService" ref="org_sakaiproject_service_gradebook_GradebookService" />
+		
+	</bean>
+	
+
+	<!-- This is the helper that will register the above bean with the ScheduleManager
+   	Things to note:
+   		- id must end with the same bean id from above
+   		- class must be the class of the SpringJobBeanWrapper, ie don't change it.
+   		- the beanId property must match the bean id from above
+   		- the jobName property is the text that will be rendered in the list of jobs in Sakai
+	-->
+	<bean id="org.sakaiproject.api.app.scheduler.JobBeanWrapper.org.sakaiproject.gradebook.jobs.ExportGradebook"
+		class="org.sakaiproject.component.app.scheduler.jobs.SpringJobBeanWrapper"
+		singleton="true" init-method="init">
+		
+		<property name="beanId">
+			<value>org.sakaiproject.gradebook.jobs.GradebookExportByTerm</value>
+		</property>
+      
+		<property name="jobName">
+			<value>Gradebook Export By Term</value>
+		</property>
+		
+      	<property name="schedulerManager">
+			<ref bean="org.sakaiproject.api.app.scheduler.SchedulerManager" />
+		</property>
+		
+   </bean>
+   
+   
+</beans>
