@@ -14,6 +14,8 @@ import java.util.Map;
 import lombok.Setter;
 import lombok.extern.apachecommons.CommonsLog;
 
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.builder.ReflectionToStringBuilder;
 import org.apache.commons.lang.math.NumberUtils;
 import org.quartz.Job;
@@ -58,11 +60,6 @@ public class GradebookExportByTerm implements Job {
 
 	private final String JOB_NAME=  "GradebookExportByTerm";
 		
-	private final String DATE_FORMAT_TIMESTAMP = "yyyy-MM-dd-HH-mm-ss";
-	
-	private final String FILE_GRADES = "gradebook.csv";
-
-	
 	public void execute(JobExecutionContext jobExecutionContext) throws JobExecutionException {
 		
 		log.info(JOB_NAME + " started.");
@@ -74,11 +71,12 @@ public class GradebookExportByTerm implements Job {
 		List<Site> sites = getSites();
 		
 		for(Site s:sites) {
+			
 			//get the grades for each site
-			//List<Grade> grades = getGradesForSite(s);
+			List<Grade> grades = getGradesForSite(s);
 		
 			//write out
-			//writeGradesToCsv(s.getId(), grades);
+			writeGradesToCsv(s.getId(), grades);
 		}
 		
 		
@@ -115,6 +113,8 @@ public class GradebookExportByTerm implements Job {
 		}
 		
 		//finalise the grades so we get an accurate export
+		//TODO instead of this, can we check if the grades have been finalised then show course grade?
+		//TODO 2 noticed this only shows course grades, need it to show all assignments for a student in a site?
 		gradebookService.finalizeGrades(gradebook.getUid());
 		
 		//get the map of course grade data from the gradebook
@@ -174,7 +174,6 @@ public class GradebookExportByTerm implements Job {
 		for(Member m: members) {
 			
 			Grade g = new Grade();
-			g.setSiteId(siteId);
 			g.setUserEid(m.getUserEid());
 			
 			//get the total points that this student scored for all assignments in the gradebook
@@ -230,7 +229,6 @@ public class GradebookExportByTerm implements Job {
 		for(Member m: members) {
 							
 			Grade g = new Grade();
-			g.setSiteId(siteId);
 			g.setUserEid(m.getUserEid());
 		
 			double totalPointsEarnedOverall = 0;
@@ -300,17 +298,23 @@ public class GradebookExportByTerm implements Job {
 	
 	
 	/**
-	 * Write the list of courses to CSV
-	 * @param courses
+	 * Write the list of grades to CSV for the site
+	 * @param siteId - id of site, used for filename
+	 * @param grades - list of Grades
 	 * @return
 	 */
-	private void writeGradesToCsv(List<Grade> grades) {
+	private void writeGradesToCsv(String siteId, List<Grade> grades) {
 		
-		String file = getOutputPath() + FILE_GRADES;
+		String file;
+		if (StringUtils.endsWith(getOutputPath(), File.pathSeparator)) {
+			file = getOutputPath() + siteId + ".csv";
+		} else {
+			file = getOutputPath() + File.pathSeparator + siteId + ".csv";
+		}
 		
 		//delete existing file so we know the data is current
 		if(deleteFile(file)) {
-			log.info("New file: "  +file);
+			log.debug("New file: " + file);
 		}
 		
 		CSVWriter writer;
@@ -320,14 +324,14 @@ public class GradebookExportByTerm implements Job {
 			CSVHelper csv = new CSVHelper();
 			
 			//set the header
-			csv.setHeader(new String[]{"siteid","eid","grade_letter","grade_points","grade_percent"});
+			csv.setHeader(new String[]{"eid","grade_letter","grade_points","grade_percent"});
 			
 			//convert each object into a string[] and add to the csv helper
 			for(Grade g: grades) {
 				
 				log.debug(ReflectionToStringBuilder.toString(g));
 				
-				String[] row = {g.getSiteId(),g.getUserEid(),g.getGradeLetter(),g.getGradePoints(), g.getGradePercent()};
+				String[] row = {g.getUserEid(),g.getGradeLetter(),g.getGradePoints(), g.getGradePercent()};
 				csv.addRow(row);
 			}
 			
@@ -371,7 +375,7 @@ public class GradebookExportByTerm implements Job {
 	 * @return
 	 */
 	private String getOutputPath() {
-		return serverConfigurationService.getString("gradebook.export.path", "/tmp");
+		return serverConfigurationService.getString("gradebook.export.path", FileUtils.getTempDirectoryPath());
 	}
 	
 	/**
@@ -389,6 +393,8 @@ public class GradebookExportByTerm implements Job {
 			
 		List<Site> allSites = siteService.getSites(SelectionType.ANY, null, null, propertyCriteria, SortType.TITLE_ASC, null);		
 		
+		log.debug("Sites match: " + allSites.size());
+
 		for(Site s: allSites) {
 			//filter my workspace
 			if(siteService.isUserSite(s.getId())){
@@ -400,7 +406,7 @@ public class GradebookExportByTerm implements Job {
 				continue;
 			}
 			
-			System.out.println("Site: " + s.getId());
+			log.debug("Site: " + s.getId());
 			
 			//otherwise add it
 			sites.add(s);
@@ -473,14 +479,14 @@ public class GradebookExportByTerm implements Job {
 		
 		List<AcademicSession> sessions = courseManagementService.getCurrentAcademicSessions();
 		
-		System.out.println("terms: " + sessions.size());
+		log.debug("terms: " + sessions.size());
 
 		if(sessions.isEmpty()) {
 			return null;
 		}
 				
 		for(AcademicSession as: sessions) {
-			System.out.println("term: " + as.getEid());
+			log.debug("term: " + as.getEid());
 		}
 		
 		return sessions.get(sessions.size()-1).getEid();

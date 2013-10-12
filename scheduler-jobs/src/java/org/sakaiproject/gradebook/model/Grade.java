@@ -11,7 +11,6 @@ import lombok.Data;
 @Data
 public class Grade {
 
-	private String siteId;
 	private String userEid;
 	private String gradeLetter;
 	private String gradePoints;
