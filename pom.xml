@@ -46,6 +46,7 @@
   				<scope>provided</scope>
 			</dependency>
 			<!--  for 2.8, additional jar required for some gb objects, needed in 2.9? -->
+			<!--  these version need to change to 2.10 for trunk -->
 			<dependency>
 				<groupId>org.sakaiproject.edu-services.gradebook</groupId>
   				<artifactId>gradebook-service-hibernate</artifactId>

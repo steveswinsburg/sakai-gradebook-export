@@ -30,6 +30,7 @@ import org.sakaiproject.coursemanagement.api.AcademicSession;
 import org.sakaiproject.coursemanagement.api.CourseManagementService;
 import org.sakaiproject.event.api.EventTrackingService;
 import org.sakaiproject.event.api.UsageSessionService;
+import org.sakaiproject.exception.IdUnusedException;
 import org.sakaiproject.gradebook.model.CSVHelper;
 import org.sakaiproject.gradebook.model.Grade;
 import org.sakaiproject.service.gradebook.shared.Assignment;
@@ -76,7 +77,7 @@ public class GradebookExportByTerm implements Job {
 			List<Grade> grades = getGradesForSite(s);
 		
 			//write out
-			writeGradesToCsv(s.getId(), grades);
+			//writeGradesToCsv(s.getId(), grades);
 		}
 		
 		
@@ -92,13 +93,12 @@ public class GradebookExportByTerm implements Job {
 		
 		List<Grade> grades = new ArrayList<Grade>();
 		
-		//get the sites
-		List<Site> sites = getSites();
-	
+		System.out.println("Site: " + s.getTitle());
+			
 		//get members, skip if none
 		List<Member> members = getUsersInSite(s.getId());
 		
-		if(members == null) {
+		if(members == null || members.isEmpty()) {
 			log.info("No members for site: " + s.getId() + ", skipping.");
 			return grades;
 		}
@@ -112,17 +112,51 @@ public class GradebookExportByTerm implements Job {
 			return grades;
 		}
 		
+		//get list of assignments in gradebook, skip if none
+		List<Assignment> assignments = gradebookService.getAssignments(s.getId());
+		
+		if(assignments == null || assignments.isEmpty()) {
+			log.info("No assignments for site: " + s.getId() + ", skipping.");
+			return grades;
+		}
+		
+		System.out.println("Assignments: " + assignments.size());
+
+		
+		
+		
+		//for each member, get the assignment results for each assignment, with course grade at the end
+		for(Member m: members) {
+			
+			List<String> assignmentGrades = new ArrayList<String>();
+			
+			System.out.println("Member: " + m.getUserEid());
+			
+			//if a user has no grade for the assignment ensure it is not missed
+			for(Assignment a: assignments) {
+				
+				System.out.println("Assignment: " + a.getName());
+				System.out.println("Points: " + gradebookService.getAssignmentScoreString(gradebook.getUid(), a.getId(), m.getUserId()));
+				
+			}
+			
+			
+		}
+		
+		
+		
 		//finalise the grades so we get an accurate export
 		//TODO instead of this, can we check if the grades have been finalised then show course grade?
 		//TODO 2 noticed this only shows course grades, need it to show all assignments for a student in a site?
-		gradebookService.finalizeGrades(gradebook.getUid());
+		//gradebookService.finalizeGrades(gradebook.getUid());
 		
 		//get the map of course grade data from the gradebook
 		//Map of enrollment displayId as key, grade as value
-		Map<String,String> calculatedCourseGrades = gradebookService.getCalculatedCourseGrade(gradebook.getUid());
-		Map<String,String> enteredCourseGrades = gradebookService.getEnteredCourseGrade(gradebook.getUid());		
+		//Map<String,String> calculatedCourseGrades = gradebookService.getCalculatedCourseGrade(gradebook.getUid());
+		//Map<String,String> enteredCourseGrades = gradebookService.getEnteredCourseGrade(gradebook.getUid());		
 		
 		//calculate the grades according to how the gradebook is configured
+		/*
 		switch (gradebook.getCategory_type()) {
             case GradebookService.CATEGORY_TYPE_NO_CATEGORY:
             	log.debug("Gradebook: " + gradebook.getUid() + " is of type 'no category'");
@@ -142,6 +176,7 @@ public class GradebookExportByTerm implements Job {
             
             break;
 		}
+		*/
 		
 		return grades;
 	}
@@ -431,16 +466,13 @@ public class GradebookExportByTerm implements Job {
 	/**
 	 * Get the members of a site
 	 * @param siteId
-	 * @return
+	 * @return list or null if site is bad
 	 */
 	private List<Member> getUsersInSite(String siteId) {
 		
 		try {
-			String siteReference = siteService.siteReference(siteId);
-			AuthzGroup authzGroup = authzGroupService.getAuthzGroup(siteReference);
-			List<Member> maintainers = new ArrayList<Member>(authzGroup.getMembers());
-			return maintainers;
-		} catch (GroupNotDefinedException e) {
+			return new ArrayList<Member>(siteService.getSite(siteId).getMembers());
+		} catch (IdUnusedException e) {
 			return null;
 		}
 		
