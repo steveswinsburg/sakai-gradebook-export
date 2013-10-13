@@ -17,9 +17,9 @@ public class StudentGrades {
 	@Getter @Setter
 	private String userEid;
 
-	//stores the grades for each assignment. Course grade is stored in COURSE_GRADE_ASSIGNMENT_ID.
-	//a separate list must be maintained that stores the order of the assignments for display so tha
-	//k = assignmentId, v = grade
+	/**
+	 * stores the grades for each assignment. Course grade is stored in COURSE_GRADE_ASSIGNMENT_ID.
+	 */
 	@Getter
 	private Map<Long,String> grades;
 	

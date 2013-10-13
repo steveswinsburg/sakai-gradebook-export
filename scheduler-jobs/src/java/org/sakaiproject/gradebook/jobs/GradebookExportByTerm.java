@@ -45,7 +45,7 @@ import au.com.bytecode.opencsv.CSVWriter;
 
 
 /**
- * Job to gradebook information for all students in all sites to a CSV
+ * Job to export gradebook information to CSV for all students in all sites (optionally filtred by term)
  * 
  * @author Steve Swinsburg (steve.swinsburg@gmail.com)
  *
@@ -54,7 +54,7 @@ import au.com.bytecode.opencsv.CSVWriter;
 public class GradebookExportByTerm implements Job {
 
 	private final String JOB_NAME = "GradebookExportByTerm";
-	private final long COURSE_GRADE_ASSIGNMENT_ID = -1; // becasue no gradeable object in Sakai should have this value
+	private final long COURSE_GRADE_ASSIGNMENT_ID = -1; // because no gradeable object in Sakai should have this value
 
 		
 	public void execute(JobExecutionContext jobExecutionContext) throws JobExecutionException {
@@ -91,7 +91,7 @@ public class GradebookExportByTerm implements Job {
 		
 		List<StudentGrades> grades = new ArrayList<StudentGrades>();
 		
-		log.debug("Processing site: " + s.getId() + " - " + s.getTitle());
+		log.info("Processing site: " + s.getId() + " - " + s.getTitle());
 			
 		//get members, skip if none
 		List<Member> members = getUsersInSite(s.getId());
@@ -130,9 +130,9 @@ public class GradebookExportByTerm implements Job {
 		for(Member m: members) {
 			
 			if(!isValidMember(s, m)) {
-				log.debug("INVALID!!!!");
+				//silently skip
+				continue;
 			}
-			
 			
 			StudentGrades g = new StudentGrades(m.getUserEid());
 
@@ -173,10 +173,10 @@ public class GradebookExportByTerm implements Job {
 	private void writeGradesToCsv(String siteId, List<StudentGrades> grades) {
 		
 		String file;
-		if (StringUtils.endsWith(getOutputPath(), File.pathSeparator)) {
+		if (StringUtils.endsWith(getOutputPath(), File.separator)) {
 			file = getOutputPath() + siteId + ".csv";
 		} else {
-			file = getOutputPath() + File.pathSeparator + siteId + ".csv";
+			file = getOutputPath() + File.separator + siteId + ".csv";
 		}
 				
 		//delete existing file so we know the data is current
@@ -393,12 +393,11 @@ public class GradebookExportByTerm implements Job {
 	 */
 	private boolean isValidMember(Site s, Member m) {
 		
-		System.out.println("MEMBER ROLE: " + m.getRole());
+		if(securityService.unlock(m.getUserId(), "gradebook.viewOwnGrades", s.getReference())) {
+			return true;
+		}
 		
-		//if(securityService.unlock(m.getUserId(), SiteService.S, site.getReference()))
-		
-		
-		return true;
+		return false;
 	}
 	
 	
