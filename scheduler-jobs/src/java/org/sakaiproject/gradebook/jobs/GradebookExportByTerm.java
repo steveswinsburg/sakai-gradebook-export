@@ -3,10 +3,8 @@ package org.sakaiproject.gradebook.jobs;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Calendar;
-import java.util.Date;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,15 +14,12 @@ import lombok.extern.apachecommons.CommonsLog;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang.StringUtils;
-import org.apache.commons.lang.builder.ReflectionToStringBuilder;
-import org.apache.commons.lang.math.NumberUtils;
 import org.quartz.Job;
 import org.quartz.JobExecutionContext;
 import org.quartz.JobExecutionException;
-import org.sakaiproject.authz.api.AuthzGroup;
 import org.sakaiproject.authz.api.AuthzGroupService;
-import org.sakaiproject.authz.api.GroupNotDefinedException;
 import org.sakaiproject.authz.api.Member;
+import org.sakaiproject.authz.api.SecurityService;
 import org.sakaiproject.component.api.ServerConfigurationService;
 import org.sakaiproject.coursemanagement.api.AcademicSession;
 import org.sakaiproject.coursemanagement.api.CourseManagementService;
@@ -32,9 +27,8 @@ import org.sakaiproject.event.api.EventTrackingService;
 import org.sakaiproject.event.api.UsageSessionService;
 import org.sakaiproject.exception.IdUnusedException;
 import org.sakaiproject.gradebook.model.CSVHelper;
-import org.sakaiproject.gradebook.model.Grade;
+import org.sakaiproject.gradebook.model.StudentGrades;
 import org.sakaiproject.service.gradebook.shared.Assignment;
-import org.sakaiproject.service.gradebook.shared.CategoryDefinition;
 import org.sakaiproject.service.gradebook.shared.GradebookNotFoundException;
 import org.sakaiproject.service.gradebook.shared.GradebookService;
 import org.sakaiproject.site.api.Site;
@@ -59,7 +53,9 @@ import au.com.bytecode.opencsv.CSVWriter;
 @CommonsLog
 public class GradebookExportByTerm implements Job {
 
-	private final String JOB_NAME=  "GradebookExportByTerm";
+	private final String JOB_NAME = "GradebookExportByTerm";
+	private final long COURSE_GRADE_ASSIGNMENT_ID = -1; // becasue no gradeable object in Sakai should have this value
+
 		
 	public void execute(JobExecutionContext jobExecutionContext) throws JobExecutionException {
 		
@@ -74,10 +70,12 @@ public class GradebookExportByTerm implements Job {
 		for(Site s:sites) {
 			
 			//get the grades for each site
-			List<Grade> grades = getGradesForSite(s);
+			List<StudentGrades> grades = getGradesForSite(s);
 		
-			//write out
-			//writeGradesToCsv(s.getId(), grades);
+			if(!grades.isEmpty()) {			
+				//write out
+				writeGradesToCsv(s.getId(), grades);
+			}
 		}
 		
 		
@@ -89,14 +87,15 @@ public class GradebookExportByTerm implements Job {
 	 * Get gradebook data
 	 * @return
 	 */
-	private List<Grade> getGradesForSite(Site s) {
+	private List<StudentGrades> getGradesForSite(Site s) {
 		
-		List<Grade> grades = new ArrayList<Grade>();
+		List<StudentGrades> grades = new ArrayList<StudentGrades>();
 		
-		System.out.println("Site: " + s.getTitle());
+		log.debug("Processing site: " + s.getId() + " - " + s.getTitle());
 			
 		//get members, skip if none
 		List<Member> members = getUsersInSite(s.getId());
+		Collections.sort(members);
 		
 		if(members == null || members.isEmpty()) {
 			log.info("No members for site: " + s.getId() + ", skipping.");
@@ -113,129 +112,47 @@ public class GradebookExportByTerm implements Job {
 		}
 		
 		//get list of assignments in gradebook, skip if none
-		List<Assignment> assignments = gradebookService.getAssignments(s.getId());
+		List<Assignment> assignments = gradebookService.getAssignments(gradebook.getUid());
 		
 		if(assignments == null || assignments.isEmpty()) {
 			log.info("No assignments for site: " + s.getId() + ", skipping.");
 			return grades;
 		}
 		
-		System.out.println("Assignments: " + assignments.size());
+		log.debug("Assignments size: " + assignments.size());
 
-		
-		
-		
+		//get course grades and use entered grades preferentially
+        Map<String, String> courseGrades = gradebookService.getCalculatedCourseGrade(gradebook.getUid()); 
+        Map<String, String> enteredGrades = gradebookService.getEnteredCourseGrade(gradebook.getUid());
+        courseGrades.putAll(enteredGrades);
+        
 		//for each member, get the assignment results for each assignment, with course grade at the end
 		for(Member m: members) {
 			
-			List<String> assignmentGrades = new ArrayList<String>();
+			if(!isValidMember(s, m)) {
+				log.debug("INVALID!!!!");
+			}
 			
-			System.out.println("Member: " + m.getUserEid());
+			
+			StudentGrades g = new StudentGrades(m.getUserEid());
+
+			log.debug("Member: " + m.getUserEid());
 			
 			//if a user has no grade for the assignment ensure it is not missed
 			for(Assignment a: assignments) {
 				
-				System.out.println("Assignment: " + a.getName());
-				System.out.println("Points: " + gradebookService.getAssignmentScoreString(gradebook.getUid(), a.getId(), m.getUserId()));
+				log.debug("Assignment: " + a.getId() + ": " + a.getName());
 				
+				String points = gradebookService.getAssignmentScoreString(gradebook.getUid(), a.getId(), m.getUserId());
+				g.addGrade(a.getId(), points);
+
+				log.debug("Points: " + points);
 			}
 			
+			//add the course grade
+			g.addGrade(COURSE_GRADE_ASSIGNMENT_ID, courseGrades.get(m.getUserId()));
 			
-		}
-		
-		
-		
-		//finalise the grades so we get an accurate export
-		//TODO instead of this, can we check if the grades have been finalised then show course grade?
-		//TODO 2 noticed this only shows course grades, need it to show all assignments for a student in a site?
-		//gradebookService.finalizeGrades(gradebook.getUid());
-		
-		//get the map of course grade data from the gradebook
-		//Map of enrollment displayId as key, grade as value
-		//Map<String,String> calculatedCourseGrades = gradebookService.getCalculatedCourseGrade(gradebook.getUid());
-		//Map<String,String> enteredCourseGrades = gradebookService.getEnteredCourseGrade(gradebook.getUid());		
-		
-		//calculate the grades according to how the gradebook is configured
-		/*
-		switch (gradebook.getCategory_type()) {
-            case GradebookService.CATEGORY_TYPE_NO_CATEGORY:
-            	log.debug("Gradebook: " + gradebook.getUid() + " is of type 'no category'");
-            	grades.addAll(getGradesIgnoringCategories(gradebook, members, s.getId(), calculatedCourseGrades, enteredCourseGrades));
-           
-            break;
-            
-            case GradebookService.CATEGORY_TYPE_ONLY_CATEGORY:
-            	log.debug("Gradebook: " + gradebook.getUid() + " is of type 'only category'");
-            	grades.addAll(getGradesIgnoringCategories(gradebook, members, s.getId(), calculatedCourseGrades, enteredCourseGrades));
-            
-            break;
-            
-            case GradebookService.CATEGORY_TYPE_WEIGHTED_CATEGORY:
-            	log.debug("Gradebook: " + gradebook.getUid() + " is of type 'category and weighted'");
-            	grades.addAll(getGradesInWeightedCategories(gradebook, members, s.getId(), calculatedCourseGrades, enteredCourseGrades));
-            
-            break;
-		}
-		*/
-		
-		return grades;
-	}
-	
-	
-	/**
-	 * Get the grades for a student where there are no weightings. Since weightings are applied to categories we can also handle the case where we have
-	 * assignments in categories, but no weightings.
-	 * This gets the assignments in the gradebook and the grades for each with simple percentage calculations
-	 * @param gradebook
-	 * @param members
-	 * @param siteId
-	 * @param calculatedCourseGrades
-	 * @param enteredCourseGrades
-	 * @return
-	 */
-	private List<Grade> getGradesIgnoringCategories(Gradebook gradebook, List<Member> members, String siteId, Map<String,String> calculatedCourseGrades, Map<String,String> enteredCourseGrades) {
-				
-		List<Grade> grades = new ArrayList<Grade>();
-				
-		//for each site, get the assignments, tally up what the total points are for each assignment
-		List<Assignment> assignments = gradebookService.getAssignments(gradebook.getUid());
-		
-		double totalPoints = 0;
-		for(Assignment assignment:assignments) {
-			totalPoints += assignment.getPoints();
-		}
-		
-		//now for each student
-		for(Member m: members) {
-			
-			Grade g = new Grade();
-			g.setUserEid(m.getUserEid());
-			
-			//get the total points that this student scored for all assignments in the gradebook
-			double points = 0;
-			for(Assignment assignment:assignments) {
-								
-				try {
-					Double score = NumberUtils.createDouble(gradebookService.getAssignmentScoreString(gradebook.getUid(), assignment.getId(), m.getUserId()));
-					if(score != null) {
-						points += score;
-					}
-				} catch (NumberFormatException nfe) {
-					//ignore, continue with the rest
-				}
-			}
-			g.setGradePoints(String.valueOf(points));
-			
-			//determine the percent
-			double percent = points/totalPoints * 100;
-			g.setGradePercent(String.valueOf(Math.round(percent)));
-			
-			//if we have an entered course grade, use that preferentially
-			if(enteredCourseGrades.containsKey(m.getUserEid())) {
-				g.setGradeLetter(enteredCourseGrades.get(m.getUserEid()));
-			} else {
-				g.setGradeLetter(calculatedCourseGrades.get(m.getUserEid()));
-			}
+			log.debug("Course Grade: " + courseGrades.get(m.getUserId()));
 			
 			grades.add(g);
 		}
@@ -243,93 +160,8 @@ public class GradebookExportByTerm implements Job {
 		return grades;
 	}
 	
-	/**
-	 * Get the grades for a student where the assignments are in weighted categories
-	 * This gets the assignments in each category and applies a weighted percentage calculation to the results for each student.
-	 * @param gradebook
-	 * @param members
-	 * @param siteId
-	 * @param calculatedCourseGrades
-	 * @param enteredCourseGrades
-	 * @return
-	 */
-	private List<Grade> getGradesInWeightedCategories(Gradebook gradebook, List<Member> members, String siteId, Map<String,String> calculatedCourseGrades, Map<String,String> enteredCourseGrades) {
-
-		List<Grade> grades = new ArrayList<Grade>();
-		
-		//get the categories
-		List<CategoryDefinition> categories = gradebookService.getCategoryDefinitions(gradebook.getUid());
-				
-		//for each student
-		for(Member m: members) {
-							
-			Grade g = new Grade();
-			g.setUserEid(m.getUserEid());
-		
-			double totalPointsEarnedOverall = 0;
-			double weightedTotalPercentEarnedOverall = 0;
-			
-			//for each category 
-			//get the list of assignments in each and get the student score for each assignment
-			//calculate the percentage this student received in the category and apply the weighting
-			//add the weighted percentages together for each category to get the final percent.
-			//This depends on the fix to the Sakai edu-services in SAK-22118.
-			
-			//log.debug("------- USER: " + m.getUserEid());
-			
-			for(CategoryDefinition category: categories) {
-				
-				//log.debug("category: " + category.getName());
-				
-				List<Assignment> assignments = category.getAssignmentList();
-				
-				double totalPointsPossibleInCategory = 0;
-				double totalPointsEarnedInCategory = 0;
-				for(Assignment assignment:assignments) {
-					totalPointsPossibleInCategory += assignment.getPoints();
-				
-					//log.debug("assignment points: " + assignment.getPoints());
-					
-					//get the students score for each assignment in this category and add them together
-					try {
-						Double score = NumberUtils.createDouble(gradebookService.getAssignmentScoreString(gradebook.getUid(), assignment.getId(), m.getUserId()));
-						if(score != null) {
-							totalPointsEarnedOverall += score;
-							totalPointsEarnedInCategory += score;
-						}
-					} catch (NumberFormatException nfe) {
-						//ignore, continue with the rest
-					}
-					
-				}
-				
-				//log.debug("totalPointsEarnedInCategory: " + totalPointsEarnedInCategory);
-				//log.debug("totalPointsPossibleInCategory: " + totalPointsPossibleInCategory);
-				//log.debug("percent: " + totalPointsEarnedInCategory/totalPointsPossibleInCategory * 100);
-
-				//calculate the weighted percentage for this category and add to tally
-				weightedTotalPercentEarnedOverall += (totalPointsEarnedInCategory/totalPointsPossibleInCategory * 100) * category.getWeight();
-				
-				//log.debug("weighted percent for category: " + weightedTotalPercentEarnedOverall);
-			}
-			
-			//log.debug("final weighted percent: " + weightedTotalPercentEarnedOverall);
-		
-			g.setGradePoints(String.valueOf(totalPointsEarnedOverall));
-			g.setGradePercent(String.valueOf(Math.round(weightedTotalPercentEarnedOverall)));
-			
-			//if we have an entered course grade, use that preferentially
-			if(enteredCourseGrades.containsKey(m.getUserEid())) {
-				g.setGradeLetter(enteredCourseGrades.get(m.getUserEid()));
-			} else {
-				g.setGradeLetter(calculatedCourseGrades.get(m.getUserEid()));
-			}
-			
-			grades.add(g);
-		}
-		
-		return grades;
-	}
+	
+	
 	
 	
 	/**
@@ -338,7 +170,7 @@ public class GradebookExportByTerm implements Job {
 	 * @param grades - list of Grades
 	 * @return
 	 */
-	private void writeGradesToCsv(String siteId, List<Grade> grades) {
+	private void writeGradesToCsv(String siteId, List<StudentGrades> grades) {
 		
 		String file;
 		if (StringUtils.endsWith(getOutputPath(), File.pathSeparator)) {
@@ -346,7 +178,7 @@ public class GradebookExportByTerm implements Job {
 		} else {
 			file = getOutputPath() + File.pathSeparator + siteId + ".csv";
 		}
-		
+				
 		//delete existing file so we know the data is current
 		if(deleteFile(file)) {
 			log.debug("New file: " + file);
@@ -358,16 +190,43 @@ public class GradebookExportByTerm implements Job {
 	   
 			CSVHelper csv = new CSVHelper();
 			
-			//set the header
-			csv.setHeader(new String[]{"eid","grade_letter","grade_points","grade_percent"});
+			//set the CSV header from the assignment titles and add additional fields
+			List<Assignment> assignments = gradebookService.getAssignments(siteId);
 			
-			//convert each object into a string[] and add to the csv helper
-			for(Grade g: grades) {
+			List<String> header = new ArrayList<String>();
+			header.add("Student ID");
+			header.add("Student Name");
+			
+			for(Assignment a: assignments) {
+				header.add(a.getName());
+			}
+			
+			header.add("Course Grade");
+			
+			csv.setHeader(header.toArray(new String[header.size()]));
+			
+			//create a formatted list of data using the grade records info and user info, using the order of the assignment list
+			//this puts it in the order we need for the CSV
+			for(StudentGrades sg: grades) {
 				
-				log.debug(ReflectionToStringBuilder.toString(g));
+				List<String> row = new ArrayList<String>();
 				
-				String[] row = {g.getUserEid(),g.getGradeLetter(),g.getGradePoints(), g.getGradePercent()};
-				csv.addRow(row);
+				//add name details
+				row.add(sg.getUserEid());
+				row.add(getDisplayName(sg.getUserEid()));		
+				
+				//add grades
+				Map<Long,String> g = sg.getGrades();
+				for(Assignment a: assignments) {
+					row.add(g.get(a.getId()));
+				}
+				
+				//add course grade
+				row.add(g.get(COURSE_GRADE_ASSIGNMENT_ID));
+				
+				log.debug("Row: " + row);
+
+				csv.addRow(row.toArray(new String[row.size()]));
 			}
 			
 			//write header
@@ -451,13 +310,13 @@ public class GradebookExportByTerm implements Job {
 	}
 	
 	/**
-	 * Get an eid for a given uuid
-	 * @param uuid
+	 * Get a display name given an eid
+	 * @param eid	eid of the user
 	 * @return
 	 */
-	private String getUserEid(String uuid){
+	private String getDisplayName(String eid){
 		try {
-			return userDirectoryService.getUser(uuid).getEid();
+			return userDirectoryService.getUserByEid(eid).getDisplayName();
 		} catch (UserNotDefinedException e) {
 			return null;
 		}
@@ -525,6 +384,23 @@ public class GradebookExportByTerm implements Job {
 
 	}
 	
+	/**
+	 * Checks if a member is valid. Sometimes the AuthzGroupService can return phantom users that no longer exist.
+	 * This will ensure that list is scrubbed.
+	 * @param s		the Site
+	 * @param m		the Member to check
+	 * @return
+	 */
+	private boolean isValidMember(Site s, Member m) {
+		
+		System.out.println("MEMBER ROLE: " + m.getRole());
+		
+		//if(securityService.unlock(m.getUserId(), SiteService.S, site.getReference()))
+		
+		
+		return true;
+	}
+	
 	
 	@Setter
 	private SessionManager sessionManager;
@@ -552,6 +428,10 @@ public class GradebookExportByTerm implements Job {
 	
 	@Setter
 	private CourseManagementService courseManagementService;
+	
+	@Setter
+	private SecurityService securityService;
+	
 	
 	
 }
