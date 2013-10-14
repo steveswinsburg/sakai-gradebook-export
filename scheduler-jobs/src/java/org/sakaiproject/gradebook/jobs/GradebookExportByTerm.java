@@ -67,6 +67,8 @@ public class GradebookExportByTerm implements Job {
 		//get all sites that match the criteria
 		List<Site> sites = getSites();
 		
+		log.info("Sites to process: " + sites.size());
+		
 		for(Site s:sites) {
 			
 			//get the grades for each site
@@ -287,8 +289,6 @@ public class GradebookExportByTerm implements Job {
 			
 		List<Site> allSites = siteService.getSites(SelectionType.ANY, null, null, propertyCriteria, SortType.TITLE_ASC, null);		
 		
-		log.debug("Sites match: " + allSites.size());
-
 		for(Site s: allSites) {
 			//filter my workspace
 			if(siteService.isUserSite(s.getId())){
