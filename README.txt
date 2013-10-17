@@ -4,15 +4,6 @@
 ### Exports a csv for each site matching the criteria (see below)
 ### The CSV contains a single row for each user containing all grades for all assignments and course grade at the end
 ###
-### NOTE: Requires opencsv in shared/lib
-### Add this to sakai-src/deploy/shared/pom.xml
-
-<dependency>
-	<groupId>net.sf.opencsv</groupId>
-	<artifactId>opencsv</artifactId>
-	<version>2.3</version>
-	<scope>compile</scope>
-</dependency>
 
 ###
 ### sakai.properties
