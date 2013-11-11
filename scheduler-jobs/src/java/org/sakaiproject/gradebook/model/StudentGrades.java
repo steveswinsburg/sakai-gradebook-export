@@ -16,6 +16,9 @@ public class StudentGrades {
 
 	@Getter @Setter
 	private String userEid;
+	
+	@Getter @Setter
+	private String displayName;
 
 	/**
 	 * stores the grades for each assignment. Course grade is stored in COURSE_GRADE_ASSIGNMENT_ID.

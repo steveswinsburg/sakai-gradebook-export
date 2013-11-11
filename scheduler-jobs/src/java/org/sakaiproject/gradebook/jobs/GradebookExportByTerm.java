@@ -5,9 +5,12 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import lombok.Setter;
 import lombok.extern.apachecommons.CommonsLog;
@@ -18,7 +21,6 @@ import org.quartz.Job;
 import org.quartz.JobExecutionContext;
 import org.quartz.JobExecutionException;
 import org.sakaiproject.authz.api.AuthzGroupService;
-import org.sakaiproject.authz.api.Member;
 import org.sakaiproject.authz.api.SecurityService;
 import org.sakaiproject.component.api.ServerConfigurationService;
 import org.sakaiproject.coursemanagement.api.AcademicSession;
@@ -38,8 +40,8 @@ import org.sakaiproject.site.api.SiteService.SortType;
 import org.sakaiproject.tool.api.Session;
 import org.sakaiproject.tool.api.SessionManager;
 import org.sakaiproject.tool.gradebook.Gradebook;
+import org.sakaiproject.user.api.User;
 import org.sakaiproject.user.api.UserDirectoryService;
-import org.sakaiproject.user.api.UserNotDefinedException;
 
 import au.com.bytecode.opencsv.CSVWriter;
 
@@ -95,12 +97,12 @@ public class GradebookExportByTerm implements Job {
 		
 		log.info("Processing site: " + s.getId() + " - " + s.getTitle());
 			
-		//get members, skip if none
-		List<Member> members = getUsersInSite(s.getId());
-		Collections.sort(members);
+		//get users in site, skip if none
+		List<User> users = getValidUsersInSite(s.getId());
+		Collections.sort(users, new LastNameComparator());
 		
-		if(members == null || members.isEmpty()) {
-			log.info("No members for site: " + s.getId() + ", skipping.");
+		if(users == null || users.isEmpty()) {
+			log.info("No users in site: " + s.getId() + ", skipping.");
 			return grades;
 		}
 		
@@ -123,38 +125,49 @@ public class GradebookExportByTerm implements Job {
 		
 		log.debug("Assignments size: " + assignments.size());
 
-		//get course grades and use entered grades preferentially
+		//get course grades and use entered grades preferentially, if they exist
         Map<String, String> courseGrades = gradebookService.getCalculatedCourseGrade(gradebook.getUid()); 
         Map<String, String> enteredGrades = gradebookService.getEnteredCourseGrade(gradebook.getUid());
-        courseGrades.putAll(enteredGrades);
         
-		//for each member, get the assignment results for each assignment, with course grade at the end
-		for(Member m: members) {
-			
-			if(!isValidMember(s, m)) {
-				//silently skip
-				continue;
-			}
-			
-			StudentGrades g = new StudentGrades(m.getUserEid());
+        Iterator<String> gradeOverrides = enteredGrades.keySet().iterator();
+        while(gradeOverrides.hasNext()) {
+        	String username = gradeOverrides.next();
+        	String override = enteredGrades.get(username);
+        	
+        	log.debug("username: " + username);
+        	log.debug("override: " + override);
+        	
+        	if(StringUtils.isNotBlank(override)) {
+        		courseGrades.put(username, override);
+        	}
+        }
 
-			log.debug("Member: " + m.getUserEid());
+        
+		//for each user, get the assignment results for each assignment, with course grade at the end
+		for(User u: users) {
 			
-			//if a user has no grade for the assignment ensure it is not missed
+			StudentGrades g = new StudentGrades(u.getEid());
+
+			log.debug("Member: " + u.getEid());
+			
+			//add in the displayname (lastname, firstname)
+			g.setDisplayName(u.getSortName());
+			
+			//if a user has no grade for the assignment ensure they are not missed
 			for(Assignment a: assignments) {
 				
 				log.debug("Assignment: " + a.getId() + ": " + a.getName());
 				
-				String points = gradebookService.getAssignmentScoreString(gradebook.getUid(), a.getId(), m.getUserId());
+				String points = gradebookService.getAssignmentScoreString(gradebook.getUid(), a.getId(), u.getId());
 				g.addGrade(a.getId(), points);
 
 				log.debug("Points: " + points);
 			}
 			
-			//add the course grade
-			g.addGrade(COURSE_GRADE_ASSIGNMENT_ID, courseGrades.get(m.getUserId()));
+			//add the course grade. Note the map has eids.
+			g.addGrade(COURSE_GRADE_ASSIGNMENT_ID, courseGrades.get(u.getEid()));
 			
-			log.debug("Course Grade: " + courseGrades.get(m.getUserId()));
+			log.debug("Course Grade: " + courseGrades.get(u.getEid()));
 			
 			grades.add(g);
 		}
@@ -215,7 +228,7 @@ public class GradebookExportByTerm implements Job {
 				
 				//add name details
 				row.add(sg.getUserEid());
-				row.add(getDisplayName(sg.getUserEid()));		
+				row.add(sg.getDisplayName());		
 				
 				//add grades
 				Map<Long,String> g = sg.getGrades();
@@ -309,28 +322,19 @@ public class GradebookExportByTerm implements Job {
 		return sites;
 	}
 	
-	/**
-	 * Get a display name given an eid
-	 * @param eid	eid of the user
-	 * @return
-	 */
-	private String getDisplayName(String eid){
-		try {
-			return userDirectoryService.getUserByEid(eid).getDisplayName();
-		} catch (UserNotDefinedException e) {
-			return null;
-		}
-	}
 	
 	/**
-	 * Get the members of a site
+	 * Get the users of a site that have the relevant permission
 	 * @param siteId
 	 * @return list or null if site is bad
 	 */
-	private List<Member> getUsersInSite(String siteId) {
+	private List<User> getValidUsersInSite(String siteId) {
 		
 		try {
-			return new ArrayList<Member>(siteService.getSite(siteId).getMembers());
+			
+			Set<String> userIds = siteService.getSite(siteId).getUsersIsAllowed("gradebook.viewOwnGrades");			
+			return userDirectoryService.getUsers(userIds);
+
 		} catch (IdUnusedException e) {
 			return null;
 		}
@@ -384,22 +388,6 @@ public class GradebookExportByTerm implements Job {
 
 	}
 	
-	/**
-	 * Checks if a member is valid. Sometimes the AuthzGroupService can return phantom users that no longer exist.
-	 * This will ensure that list is scrubbed.
-	 * @param s		the Site
-	 * @param m		the Member to check
-	 * @return
-	 */
-	private boolean isValidMember(Site s, Member m) {
-		
-		if(securityService.unlock(m.getUserId(), "gradebook.viewOwnGrades", s.getReference())) {
-			return true;
-		}
-		
-		return false;
-	}
-	
 	
 	@Setter
 	private SessionManager sessionManager;
@@ -431,6 +419,17 @@ public class GradebookExportByTerm implements Job {
 	@Setter
 	private SecurityService securityService;
 	
+}
+
+/**
+ * Comparator class for sorting a list of users by last name
+ */
+class LastNameComparator implements Comparator<User> {
 	
-	
+    @Override
+    public int compare(User u1, User u2) {
+    	return u1.getLastName().compareTo(u2.getLastName());
+	}
+    
+    
 }
