@@ -47,7 +47,7 @@ import au.com.bytecode.opencsv.CSVWriter;
 
 
 /**
- * Job to export gradebook information to CSV for all students in all sites (optionally filtred by term)
+ * Job to export gradebook information to CSV for all students in all sites (optionally filtered by term)
  * 
  * @author Steve Swinsburg (steve.swinsburg@gmail.com)
  *
@@ -212,8 +212,9 @@ public class GradebookExportByTerm implements Job {
 			header.add("Student ID");
 			header.add("Student Name");
 			
+			//add assignment name and then the points possible for the assignment
 			for(Assignment a: assignments) {
-				header.add(a.getName());
+				header.add(a.getName() + " [" + a.getPoints() + "]");
 			}
 			
 			header.add("Course Grade");
