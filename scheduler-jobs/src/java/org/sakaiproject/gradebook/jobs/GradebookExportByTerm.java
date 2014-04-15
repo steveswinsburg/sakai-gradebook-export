@@ -3,6 +3,7 @@ package org.sakaiproject.gradebook.jobs;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -11,6 +12,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 import lombok.Setter;
 import lombok.extern.apachecommons.CommonsLog;
@@ -31,6 +34,7 @@ import org.sakaiproject.exception.IdUnusedException;
 import org.sakaiproject.gradebook.model.CSVHelper;
 import org.sakaiproject.gradebook.model.StudentGrades;
 import org.sakaiproject.service.gradebook.shared.Assignment;
+import org.sakaiproject.service.gradebook.shared.CommentDefinition;
 import org.sakaiproject.service.gradebook.shared.GradebookNotFoundException;
 import org.sakaiproject.service.gradebook.shared.GradebookService;
 import org.sakaiproject.site.api.Site;
@@ -57,7 +61,7 @@ public class GradebookExportByTerm implements Job {
 
 	private final String JOB_NAME = "GradebookExportByTerm";
 	private final long COURSE_GRADE_ASSIGNMENT_ID = -1; // because no gradeable object in Sakai should have this value
-
+	private final long TOTAL_POINTS_EARNED = -2; // see above
 		
 	public void execute(JobExecutionContext jobExecutionContext) throws JobExecutionException {
 		
@@ -78,6 +82,7 @@ public class GradebookExportByTerm implements Job {
 		
 			if(!grades.isEmpty()) {			
 				//write out
+				//TODO these two methods (getGradesForSite and writeGradeToCsv) could be combined into one sicne there is additional data being fetched in both locations
 				writeGradesToCsv(s.getId(), grades);
 			}
 		}
@@ -128,7 +133,7 @@ public class GradebookExportByTerm implements Job {
 		//get course grades and use entered grades preferentially, if they exist
         Map<String, String> courseGrades = gradebookService.getCalculatedCourseGrade(gradebook.getUid()); 
         Map<String, String> enteredGrades = gradebookService.getEnteredCourseGrade(gradebook.getUid());
-        
+          
         Iterator<String> gradeOverrides = enteredGrades.keySet().iterator();
         while(gradeOverrides.hasNext()) {
         	String username = gradeOverrides.next();
@@ -141,14 +146,16 @@ public class GradebookExportByTerm implements Job {
         		courseGrades.put(username, override);
         	}
         }
-
         
-		//for each user, get the assignment results for each assignment, with course grade at the end
+        //get fixed points for all students in the gradebook, taking into account dropped scores etc
+        Map<String,String> fixedPoints = gradebookService.getFixedPoint(gradebook.getUid());
+        
+		//for each user, get the assignment results for each assignment, with TPE and course grade at the end
 		for(User u: users) {
 			
-			StudentGrades g = new StudentGrades(u.getEid());
+			StudentGrades g = new StudentGrades(u.getId(), u.getEid());
 
-			log.debug("Member: " + u.getEid());
+			log.debug("Member: " + u.getId() + " - " + u.getEid());
 			
 			//add in the displayname (lastname, firstname)
 			g.setDisplayName(u.getSortName());
@@ -160,9 +167,13 @@ public class GradebookExportByTerm implements Job {
 				
 				String points = gradebookService.getAssignmentScoreString(gradebook.getUid(), a.getId(), u.getId());
 				g.addGrade(a.getId(), points);
+								
 
 				log.debug("Points: " + points);
 			}
+			
+			//add total points earned
+			g.addGrade(TOTAL_POINTS_EARNED, fixedPoints.get(u.getEid()));
 			
 			//add the course grade. Note the map has eids.
 			g.addGrade(COURSE_GRADE_ASSIGNMENT_ID, courseGrades.get(u.getEid()));
@@ -171,7 +182,7 @@ public class GradebookExportByTerm implements Job {
 			
 			grades.add(g);
 		}
-		
+				
 		return grades;
 	}
 	
@@ -187,6 +198,14 @@ public class GradebookExportByTerm implements Job {
 	 */
 	private void writeGradesToCsv(String siteId, List<StudentGrades> grades) {
 		
+		Gradebook gradebook = null;
+		try {
+			gradebook = (Gradebook)gradebookService.getGradebook(siteId);
+		} catch (GradebookNotFoundException gbe) {
+			log.error("Gradebook can no longer be found: " + siteId);
+			return;
+		}
+				
 		String file;
 		if (StringUtils.endsWith(getOutputPath(), File.separator)) {
 			file = getOutputPath() + siteId + ".csv";
@@ -213,9 +232,13 @@ public class GradebookExportByTerm implements Job {
 			header.add("Student Name");
 			
 			//add assignment name and then the points possible for the assignment
+			//then another column for the comments
 			for(Assignment a: assignments) {
 				header.add(a.getName() + " [" + a.getPoints() + "]");
+				header.add("Comments");
 			}
+			
+			header.add("Total Points Earned [Points Possible]");
 			
 			header.add("Course Grade");
 			
@@ -235,7 +258,18 @@ public class GradebookExportByTerm implements Job {
 				Map<Long,String> g = sg.getGrades();
 				for(Assignment a: assignments) {
 					row.add(g.get(a.getId()));
+					
+					//get comment for each assignment
+					CommentDefinition commentDefinition = gradebookService.getAssignmentScoreComment(gradebook.getUid(), a.getId(), sg.getUserId());
+					String comment = null;
+					if(commentDefinition != null) {
+						comment = commentDefinition.getCommentText();
+					}
+					row.add(comment);
 				}
+				
+				//add total points earned and possible
+				row.add(g.get(TOTAL_POINTS_EARNED) + " [" + getTotalPointsPossible(assignments) + "]");
 				
 				//add course grade
 				row.add(g.get(COURSE_GRADE_ASSIGNMENT_ID));
@@ -244,6 +278,20 @@ public class GradebookExportByTerm implements Job {
 
 				csv.addRow(row.toArray(new String[row.size()]));
 			}
+			
+			//add a row to show the grade mapping (sorted via the value)
+			Map<String,Double> baseMap = gradebook.getSelectedGradeMapping().getGradeMap();
+	        ValueComparator gradeMappingsComparator = new ValueComparator(baseMap);
+	        TreeMap<String,Double> sortedGradeMappings = new TreeMap<String,Double>(gradeMappingsComparator);
+	        sortedGradeMappings.putAll(baseMap);
+	        
+			List<String> mappings = new ArrayList<String>();
+			for(String key: sortedGradeMappings.keySet()) {
+				mappings.add(key + "=" + baseMap.get(key));
+			}
+			csv.addRow(new String[]{ "Mappings: " + StringUtils.join(mappings, ',')});
+
+
 			
 			//write header
 			writer.writeNext(csv.getHeader());
@@ -389,6 +437,22 @@ public class GradebookExportByTerm implements Job {
 
 	}
 	
+	/**
+	 * Helper to get the total number of points possible for all assignments
+	 * @return
+	 */
+	private String getTotalPointsPossible(List<Assignment> assignments) {
+		double totalPointsPossible = 0;
+		
+		for(Assignment a: assignments) {
+			//if(a.isCounted()){
+				totalPointsPossible += a.getPoints();
+			//}
+		}
+		
+		return String.valueOf(totalPointsPossible);
+	}
+	
 	
 	@Setter
 	private SessionManager sessionManager;
@@ -431,6 +495,24 @@ class LastNameComparator implements Comparator<User> {
     public int compare(User u1, User u2) {
     	return u1.getLastName().compareTo(u2.getLastName());
 	}
-    
-    
+   
+}
+
+/**
+ * Comparator class for sorting a grade map by its value
+ */
+class ValueComparator implements Comparator<String> {
+
+    Map<String, Double> base;
+    public ValueComparator(Map<String, Double> base) {
+        this.base = base;
+    }
+
+    public int compare(String a, String b) {
+        if (base.get(a) >= base.get(b)) {
+            return -1;
+        } else {
+            return 1;
+        }
+    }
 }

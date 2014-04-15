@@ -15,6 +15,9 @@ import lombok.Setter;
 public class StudentGrades {
 
 	@Getter @Setter
+	private String userId;
+	
+	@Getter @Setter
 	private String userEid;
 	
 	@Getter @Setter
@@ -27,7 +30,8 @@ public class StudentGrades {
 	private Map<Long,String> grades;
 	
 	
-	public StudentGrades(String userEid) {
+	public StudentGrades(String userId, String userEid) {
+		this.userId = userId;
 		this.userEid = userEid;
 	}
 	
