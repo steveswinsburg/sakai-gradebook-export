@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.text.NumberFormat;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -34,6 +35,7 @@ import org.sakaiproject.exception.IdUnusedException;
 import org.sakaiproject.gradebook.model.CSVHelper;
 import org.sakaiproject.gradebook.model.StudentGrades;
 import org.sakaiproject.service.gradebook.shared.Assignment;
+import org.sakaiproject.service.gradebook.shared.CategoryDefinition;
 import org.sakaiproject.service.gradebook.shared.CommentDefinition;
 import org.sakaiproject.service.gradebook.shared.GradebookNotFoundException;
 import org.sakaiproject.service.gradebook.shared.GradebookService;
@@ -62,7 +64,9 @@ public class GradebookExportByTerm implements Job {
 	private final String JOB_NAME = "GradebookExportByTerm";
 	private final long COURSE_GRADE_ASSIGNMENT_ID = -1; // because no gradeable object in Sakai should have this value
 	private final long TOTAL_POINTS_EARNED = -2; // see above
-		
+	
+	// do all of the work
+	// this has been combined into one method. It's a lot of code but it reduces additional lookups and duplication of code, refactor if time allows
 	public void execute(JobExecutionContext jobExecutionContext) throws JobExecutionException {
 		
 		log.info(JOB_NAME + " started.");
@@ -77,235 +81,219 @@ public class GradebookExportByTerm implements Job {
 		
 		for(Site s:sites) {
 			
+			String siteId = s.getId();
+			
 			//get the grades for each site
-			List<StudentGrades> grades = getGradesForSite(s);
+			List<StudentGrades> grades = new ArrayList<StudentGrades>();
+			log.info("Processing site: " + siteId + " - " + s.getTitle());
+			
+			//get users in site, skip if none
+			List<User> users = getValidUsersInSite(siteId);
+			Collections.sort(users, new LastNameComparator());
+			if(users == null || users.isEmpty()) {
+				log.info("No users in site: " + siteId + ", skipping.");
+				continue;
+			}
+			
+			//get gradebook for this site, skip if none
+			Gradebook gradebook = null;
+			try {
+				gradebook = (Gradebook)gradebookService.getGradebook(siteId);
+			} catch (GradebookNotFoundException gbe) {
+				log.info("No gradebook for site: " + siteId + ", skipping.");
+				continue;
+			}
+			
+			//get list of assignments in gradebook, skip if none
+			List<Assignment> assignments = gradebookService.getAssignments(gradebook.getUid());
+			if(assignments == null || assignments.isEmpty()) {
+				log.info("No assignments for site: " + siteId + ", skipping.");
+				continue;
+			}
+			log.debug("Assignments size: " + assignments.size());
+
+			//get course grades and use entered grades preferentially, if they exist
+	        Map<String, String> courseGrades = gradebookService.getCalculatedCourseGrade(gradebook.getUid()); 
+	        Map<String, String> enteredGrades = gradebookService.getEnteredCourseGrade(gradebook.getUid());
+	          
+	        Iterator<String> gradeOverrides = enteredGrades.keySet().iterator();
+	        while(gradeOverrides.hasNext()) {
+	        	String username = gradeOverrides.next();
+	        	String override = enteredGrades.get(username);
+	        	
+	        	log.debug("username: " + username);
+	        	log.debug("override: " + override);
+	        	
+	        	if(StringUtils.isNotBlank(override)) {
+	        		courseGrades.put(username, override);
+	        	}
+	        }
+	        
+	        //get fixed points for all students in the gradebook, taking into account dropped scores etc
+	        Map<String,String> fixedPoints = gradebookService.getFixedPoint(gradebook.getUid());
+	        
+	        //get any categories
+			List<CategoryDefinition> categoryDefinitions = gradebookService.getCategoryDefinitions(siteId);
+
+	        
+			//for each user, get the assignment results for each assignment, with TPE and course grade at the end
+			for(User u: users) {
+				
+				StudentGrades g = new StudentGrades(u.getId(), u.getEid());
+
+				log.debug("Member: " + u.getId() + " - " + u.getEid());
+				
+				//add in the displayname (lastname, firstname)
+				g.setDisplayName(u.getSortName());
+				
+				//if a user has no grade for the assignment ensure they are not missed
+				for(Assignment a: assignments) {
+					
+					log.debug("Assignment: " + a.getId() + ": " + a.getName());
+					
+					String points = gradebookService.getAssignmentScoreString(gradebook.getUid(), a.getId(), u.getId());
+					g.addGrade(a.getId(), points);
+									
+					log.debug("Points: " + points);
+				}
+				
+				//determine a grade for any categories
+				for(CategoryDefinition cd: categoryDefinitions) {
+					String grade = getGradeForCategory(cd);
+					g.addGrade(cd.getId(), grade);
+				}
+				
+				
+				//add total points earned
+				g.addGrade(TOTAL_POINTS_EARNED, fixedPoints.get(u.getEid()));
+				
+				//add the course grade. Note the map has eids.
+				g.addGrade(COURSE_GRADE_ASSIGNMENT_ID, courseGrades.get(u.getEid()));
+				
+				log.debug("Course Grade: " + courseGrades.get(u.getEid()));
+				
+				grades.add(g);
+			}
 		
+			//now write the grades
 			if(!grades.isEmpty()) {			
-				//write out
-				//TODO these two methods (getGradesForSite and writeGradeToCsv) could be combined into one sicne there is additional data being fetched in both locations
-				writeGradesToCsv(s.getId(), grades);
+				
+				String file;
+				if (StringUtils.endsWith(getOutputPath(), File.separator)) {
+					file = getOutputPath() + siteId + ".csv";
+				} else {
+					file = getOutputPath() + File.separator + siteId + ".csv";
+				}
+						
+				//delete existing file so we know the data is current
+				if(deleteFile(file)) {
+					log.debug("New file: " + file);
+				}
+				
+				CSVWriter writer;
+				try {
+					writer = new CSVWriter(new FileWriter(file), ',');
+			   
+					CSVHelper csv = new CSVHelper();
+					
+					//set the CSV header from the assignment titles and add additional fields
+					List<String> header = new ArrayList<String>();
+					header.add("Student ID");
+					header.add("Student Name");
+					
+					//add assignment name and then the points possible for the assignment
+					//then another column for the comments
+					for(Assignment a: assignments) {
+						header.add(a.getName() + " [" + a.getPoints() + "]");
+						header.add("Comments");
+					}
+					
+					//add the category headers
+					for(CategoryDefinition cd: categoryDefinitions) {
+						Double weight = cd.getWeight();
+						if(weight != null) {
+							header.add(cd.getName() + " [" + toPercentage(cd.getWeight()) + "]"); //display as percentage. it's stored as a fraction  ie 0.1 for 10%
+						
+						} else {
+							header.add(cd.getName());
+						}
+					}
+					
+					//add these too
+					header.add("Total Points Earned [Points Possible]");
+					header.add("Course Grade");
+					
+					csv.setHeader(header.toArray(new String[header.size()]));
+					
+					//create a formatted list of data using the grade records info and user info, using the order of the assignment list
+					//this puts it in the order we need for the CSV
+					for(StudentGrades sg: grades) {
+						
+						List<String> row = new ArrayList<String>();
+						
+						//add name details
+						row.add(sg.getUserEid());
+						row.add(sg.getDisplayName());		
+						
+						//add grades
+						Map<Long,String> g = sg.getGrades();
+						for(Assignment a: assignments) {
+							row.add(g.get(a.getId()));
+							
+							//get comment for each assignment
+							CommentDefinition commentDefinition = gradebookService.getAssignmentScoreComment(gradebook.getUid(), a.getId(), sg.getUserId());
+							String comment = null;
+							if(commentDefinition != null) {
+								comment = commentDefinition.getCommentText();
+							}
+							row.add(comment);
+						}
+						
+						//add category grades
+						for(CategoryDefinition cd: categoryDefinitions) {
+							row.add(g.get(cd.getId()));
+						}
+						
+						//add total points earned and possible
+						row.add(g.get(TOTAL_POINTS_EARNED) + " [" + getTotalPointsPossible(assignments) + "]");
+						
+						//add course grade
+						row.add(g.get(COURSE_GRADE_ASSIGNMENT_ID));
+						
+						log.debug("Row: " + row);
+
+						csv.addRow(row.toArray(new String[row.size()]));
+					}
+					
+					//add a row to show the grade mapping (sorted via the value)
+					Map<String,Double> baseMap = gradebook.getSelectedGradeMapping().getGradeMap();
+			        ValueComparator gradeMappingsComparator = new ValueComparator(baseMap);
+			        TreeMap<String,Double> sortedGradeMappings = new TreeMap<String,Double>(gradeMappingsComparator);
+			        sortedGradeMappings.putAll(baseMap);
+			        
+					List<String> mappings = new ArrayList<String>();
+					for(String key: sortedGradeMappings.keySet()) {
+						mappings.add(key + "=" + baseMap.get(key));
+					}
+					csv.addRow(new String[]{ "Mappings: " + StringUtils.join(mappings, ',')});
+
+					//write header
+					writer.writeNext(csv.getHeader());
+					writer.writeAll(csv.getRows());
+					
+					writer.close();
+					
+					log.info("Successfully wrote CSV to: " + file);
+			           
+				} catch (IOException e) {
+					log.equals("Error writing CSV: " + e.getClass() + " : " + e.getMessage());
+				}
 			}
 		}
-		
 		
 		log.info(JOB_NAME + " ended.");
 	}
 	
-	
-	/**
-	 * Get gradebook data
-	 * @return
-	 */
-	private List<StudentGrades> getGradesForSite(Site s) {
-		
-		List<StudentGrades> grades = new ArrayList<StudentGrades>();
-		
-		log.info("Processing site: " + s.getId() + " - " + s.getTitle());
-			
-		//get users in site, skip if none
-		List<User> users = getValidUsersInSite(s.getId());
-		Collections.sort(users, new LastNameComparator());
-		
-		if(users == null || users.isEmpty()) {
-			log.info("No users in site: " + s.getId() + ", skipping.");
-			return grades;
-		}
-		
-		//get gradebook for this site, skip if none
-		Gradebook gradebook = null;
-		try {
-			gradebook = (Gradebook)gradebookService.getGradebook(s.getId());
-		} catch (GradebookNotFoundException gbe) {
-			log.info("No gradebook for site: " + s.getId() + ", skipping.");
-			return grades;
-		}
-		
-		//get list of assignments in gradebook, skip if none
-		List<Assignment> assignments = gradebookService.getAssignments(gradebook.getUid());
-		
-		if(assignments == null || assignments.isEmpty()) {
-			log.info("No assignments for site: " + s.getId() + ", skipping.");
-			return grades;
-		}
-		
-		log.debug("Assignments size: " + assignments.size());
-
-		//get course grades and use entered grades preferentially, if they exist
-        Map<String, String> courseGrades = gradebookService.getCalculatedCourseGrade(gradebook.getUid()); 
-        Map<String, String> enteredGrades = gradebookService.getEnteredCourseGrade(gradebook.getUid());
-          
-        Iterator<String> gradeOverrides = enteredGrades.keySet().iterator();
-        while(gradeOverrides.hasNext()) {
-        	String username = gradeOverrides.next();
-        	String override = enteredGrades.get(username);
-        	
-        	log.debug("username: " + username);
-        	log.debug("override: " + override);
-        	
-        	if(StringUtils.isNotBlank(override)) {
-        		courseGrades.put(username, override);
-        	}
-        }
-        
-        //get fixed points for all students in the gradebook, taking into account dropped scores etc
-        Map<String,String> fixedPoints = gradebookService.getFixedPoint(gradebook.getUid());
-        
-		//for each user, get the assignment results for each assignment, with TPE and course grade at the end
-		for(User u: users) {
-			
-			StudentGrades g = new StudentGrades(u.getId(), u.getEid());
-
-			log.debug("Member: " + u.getId() + " - " + u.getEid());
-			
-			//add in the displayname (lastname, firstname)
-			g.setDisplayName(u.getSortName());
-			
-			//if a user has no grade for the assignment ensure they are not missed
-			for(Assignment a: assignments) {
-				
-				log.debug("Assignment: " + a.getId() + ": " + a.getName());
-				
-				String points = gradebookService.getAssignmentScoreString(gradebook.getUid(), a.getId(), u.getId());
-				g.addGrade(a.getId(), points);
-								
-
-				log.debug("Points: " + points);
-			}
-			
-			//add total points earned
-			g.addGrade(TOTAL_POINTS_EARNED, fixedPoints.get(u.getEid()));
-			
-			//add the course grade. Note the map has eids.
-			g.addGrade(COURSE_GRADE_ASSIGNMENT_ID, courseGrades.get(u.getEid()));
-			
-			log.debug("Course Grade: " + courseGrades.get(u.getEid()));
-			
-			grades.add(g);
-		}
-				
-		return grades;
-	}
-	
-	
-	
-	
-	
-	/**
-	 * Write the list of grades to CSV for the site
-	 * @param siteId - id of site, used for filename
-	 * @param grades - list of Grades
-	 * @return
-	 */
-	private void writeGradesToCsv(String siteId, List<StudentGrades> grades) {
-		
-		Gradebook gradebook = null;
-		try {
-			gradebook = (Gradebook)gradebookService.getGradebook(siteId);
-		} catch (GradebookNotFoundException gbe) {
-			log.error("Gradebook can no longer be found: " + siteId);
-			return;
-		}
-				
-		String file;
-		if (StringUtils.endsWith(getOutputPath(), File.separator)) {
-			file = getOutputPath() + siteId + ".csv";
-		} else {
-			file = getOutputPath() + File.separator + siteId + ".csv";
-		}
-				
-		//delete existing file so we know the data is current
-		if(deleteFile(file)) {
-			log.debug("New file: " + file);
-		}
-		
-		CSVWriter writer;
-		try {
-			writer = new CSVWriter(new FileWriter(file), ',');
-	   
-			CSVHelper csv = new CSVHelper();
-			
-			//set the CSV header from the assignment titles and add additional fields
-			List<Assignment> assignments = gradebookService.getAssignments(siteId);
-			
-			List<String> header = new ArrayList<String>();
-			header.add("Student ID");
-			header.add("Student Name");
-			
-			//add assignment name and then the points possible for the assignment
-			//then another column for the comments
-			for(Assignment a: assignments) {
-				header.add(a.getName() + " [" + a.getPoints() + "]");
-				header.add("Comments");
-			}
-			
-			header.add("Total Points Earned [Points Possible]");
-			
-			header.add("Course Grade");
-			
-			csv.setHeader(header.toArray(new String[header.size()]));
-			
-			//create a formatted list of data using the grade records info and user info, using the order of the assignment list
-			//this puts it in the order we need for the CSV
-			for(StudentGrades sg: grades) {
-				
-				List<String> row = new ArrayList<String>();
-				
-				//add name details
-				row.add(sg.getUserEid());
-				row.add(sg.getDisplayName());		
-				
-				//add grades
-				Map<Long,String> g = sg.getGrades();
-				for(Assignment a: assignments) {
-					row.add(g.get(a.getId()));
-					
-					//get comment for each assignment
-					CommentDefinition commentDefinition = gradebookService.getAssignmentScoreComment(gradebook.getUid(), a.getId(), sg.getUserId());
-					String comment = null;
-					if(commentDefinition != null) {
-						comment = commentDefinition.getCommentText();
-					}
-					row.add(comment);
-				}
-				
-				//add total points earned and possible
-				row.add(g.get(TOTAL_POINTS_EARNED) + " [" + getTotalPointsPossible(assignments) + "]");
-				
-				//add course grade
-				row.add(g.get(COURSE_GRADE_ASSIGNMENT_ID));
-				
-				log.debug("Row: " + row);
-
-				csv.addRow(row.toArray(new String[row.size()]));
-			}
-			
-			//add a row to show the grade mapping (sorted via the value)
-			Map<String,Double> baseMap = gradebook.getSelectedGradeMapping().getGradeMap();
-	        ValueComparator gradeMappingsComparator = new ValueComparator(baseMap);
-	        TreeMap<String,Double> sortedGradeMappings = new TreeMap<String,Double>(gradeMappingsComparator);
-	        sortedGradeMappings.putAll(baseMap);
-	        
-			List<String> mappings = new ArrayList<String>();
-			for(String key: sortedGradeMappings.keySet()) {
-				mappings.add(key + "=" + baseMap.get(key));
-			}
-			csv.addRow(new String[]{ "Mappings: " + StringUtils.join(mappings, ',')});
-
-
-			
-			//write header
-			writer.writeNext(csv.getHeader());
-			writer.writeAll(csv.getRows());
-			
-			writer.close();
-			
-			log.info("Successfully wrote CSV to: " + file);
-	           
-		} catch (IOException e) {
-			log.equals("Error writing CSV: " + e.getClass() + " : " + e.getMessage());
-		}
-		
-	}
 	
 	/**
 	 * Start a session for the admin user and the given jobName
@@ -451,6 +439,27 @@ public class GradebookExportByTerm implements Job {
 		}
 		
 		return String.valueOf(totalPointsPossible);
+	}
+	
+	/**
+	 * Format a double into a percentage string
+	 * @param d double number. 0-3 decimal places as per gradebook allows
+	 * @return 12% string
+	 */
+	private String toPercentage(double d) {
+		NumberFormat nf = NumberFormat.getPercentInstance();
+		nf.setMinimumFractionDigits(0);
+		nf.setMaximumFractionDigits(3);
+		return nf.format(d);
+	}
+	
+	private String getGradeForCategory(CategoryDefinition cd) {
+		
+		//determine a grade for any categories
+		//List<Assignment> assignmentsInCategory = cd.getAssignmentList();
+			return "XXX";
+			
+		
 	}
 	
 	
