@@ -159,8 +159,7 @@ public class GradebookExportByTerm implements Job {
 				
 				//determine a grade for any categories
 				for(CategoryDefinition cd: categoryDefinitions) {
-					String grade = getGradeForCategory(cd);
-					g.addGrade(cd.getId(), grade);
+					g.addGrade(cd.getId(), getGradeForCategory(gradebook.getUid(), u.getId(), cd));
 				}
 				
 				
@@ -212,7 +211,7 @@ public class GradebookExportByTerm implements Job {
 					for(CategoryDefinition cd: categoryDefinitions) {
 						Double weight = cd.getWeight();
 						if(weight != null) {
-							header.add(cd.getName() + " [" + toPercentage(cd.getWeight()) + "]"); //display as percentage. it's stored as a fraction  ie 0.1 for 10%
+							header.add(cd.getName() + " [" + toPercentage(cd.getWeight(), 3) + "]"); //display as percentage. it's stored as a fraction  ie 0.1 for 10%
 						
 						} else {
 							header.add(cd.getName());
@@ -444,22 +443,43 @@ public class GradebookExportByTerm implements Job {
 	/**
 	 * Format a double into a percentage string
 	 * @param d double number. 0-3 decimal places as per gradebook allows
+	 * @param precision. number of decimal places
 	 * @return 12% string
 	 */
-	private String toPercentage(double d) {
+	private String toPercentage(double d, int precision) {
+		int maxPrecision = 3;
+		if(precision > maxPrecision) {
+			precision = maxPrecision;
+		}
+		
 		NumberFormat nf = NumberFormat.getPercentInstance();
 		nf.setMinimumFractionDigits(0);
-		nf.setMaximumFractionDigits(3);
+		nf.setMaximumFractionDigits(precision);
 		return nf.format(d);
 	}
 	
-	private String getGradeForCategory(CategoryDefinition cd) {
+	/**
+	 * Determine a grade for all assignments in the given category categories. Formatted as a percentage.
+	 *
+	 * @param gradebookUid
+	 * @param userId
+	 * @param cd
+	 * @return
+	 */
+	private String getGradeForCategory(String gradebookUid, String userId, CategoryDefinition cd) {
 		
-		//determine a grade for any categories
-		//List<Assignment> assignmentsInCategory = cd.getAssignmentList();
-			return "XXX";
-			
+		List<Assignment> assignmentsInCategory = cd.getAssignmentList();
+		double userPoints = 0;
+		double totalPoints = 0;
+
+		for(Assignment a: assignmentsInCategory) {
+			userPoints += Double.valueOf(gradebookService.getAssignmentScoreString(gradebookUid, a.getId(), userId));
+			totalPoints += a.getPoints();
+		}
 		
+		String percentage = toPercentage(userPoints / totalPoints, 1);
+		
+		return percentage;
 	}
 	
 	
