@@ -11,7 +11,7 @@
 	<name>Sakai Gradebook Export :: Jobs</name>
 	<groupId>org.sakaiproject.gradebook</groupId>
   	<artifactId>gradebook-export-jobs</artifactId>
-  	<version>1.3</version>
+  	<version>1.5</version>
 
 	<packaging>jar</packaging>
   	<!-- dont specify a deploy target, this will be bundled into the component -->

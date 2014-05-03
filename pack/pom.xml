@@ -11,7 +11,7 @@
     <name>Sakai Gradebook Export :: Components</name>
     <groupId>org.sakaiproject.gradebook</groupId>
   	<artifactId>gradebook-export-pack</artifactId>
-  	<version>1.3</version>
+  	<version>1.5</version>
     
     <packaging>sakai-component</packaging>
     <properties>
