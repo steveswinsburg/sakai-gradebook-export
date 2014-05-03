@@ -129,12 +129,11 @@ public class GradebookExportByTerm implements Job {
 	        	}
 	        }
 	        
-	        //get fixed points for all students in the gradebook, taking into account dropped scores etc
-	        Map<String,String> fixedPoints = gradebookService.getFixedPoint(gradebook.getUid());
-	        
 	        //get any categories
 			List<CategoryDefinition> categoryDefinitions = gradebookService.getCategoryDefinitions(siteId);
 
+			//get a count of the total points possible for all assignments
+			String totalPointsPossible = getTotalPointsPossible(assignments);
 	        
 			//for each user, get the assignment results for each assignment, with TPE and course grade at the end
 			for(User u: users) {
@@ -159,12 +158,11 @@ public class GradebookExportByTerm implements Job {
 				
 				//determine a grade for any categories
 				for(CategoryDefinition cd: categoryDefinitions) {
-					g.addGrade(cd.getId(), getGradeForCategory(gradebook.getUid(), u.getId(), cd));
+					g.addGrade(cd.getId(), getDisplayGradeForCategory(gradebook.getUid(), u.getId(), cd));
 				}
 				
-				
 				//add total points earned
-				g.addGrade(TOTAL_POINTS_EARNED, fixedPoints.get(u.getEid()));
+				g.addGrade(TOTAL_POINTS_EARNED, this.getTotalPointsEarned(gradebook.getUid(), u.getId(), assignments));
 				
 				//add the course grade. Note the map has eids.
 				g.addGrade(COURSE_GRADE_ASSIGNMENT_ID, courseGrades.get(u.getEid()));
@@ -254,7 +252,7 @@ public class GradebookExportByTerm implements Job {
 						}
 						
 						//add total points earned and possible
-						row.add(g.get(TOTAL_POINTS_EARNED) + " [" + getTotalPointsPossible(assignments) + "]");
+						row.add(g.get(TOTAL_POINTS_EARNED) + " [" + totalPointsPossible + "]");
 						
 						//add course grade
 						row.add(g.get(COURSE_GRADE_ASSIGNMENT_ID));
@@ -426,6 +424,7 @@ public class GradebookExportByTerm implements Job {
 	
 	/**
 	 * Helper to get the total number of points possible for all assignments
+	 * @param assignments
 	 * @return
 	 */
 	private String getTotalPointsPossible(List<Assignment> assignments) {
@@ -438,6 +437,30 @@ public class GradebookExportByTerm implements Job {
 		}
 		
 		return String.valueOf(totalPointsPossible);
+	}
+	
+	/**
+	 * Get the total points earned for a user. Sums their score in all assignments. 
+	 * Assumes gradebookService handles the drophighest/lowest/other functionality and returns the correct score for each assignment.
+	 * Returns N/A if not available
+	 * 
+	 * @param gradebookUid
+	 * @param userId
+	 * @param assignments
+	 * @return
+	 */
+	private String getTotalPointsEarned(String gradebookUid, String userId, List<Assignment> assignments) {
+		double totalPointsEarned = 0;
+		
+		for(Assignment a: assignments) {
+			try {
+				totalPointsEarned += Double.valueOf(gradebookService.getAssignmentScoreString(gradebookUid, a.getId(), userId));
+			} catch (Exception e) {
+				return "N/A"; //not yet entered
+			}
+		}
+		
+		return String.valueOf(totalPointsEarned);
 	}
 	
 	/**
@@ -459,21 +482,25 @@ public class GradebookExportByTerm implements Job {
 	}
 	
 	/**
-	 * Determine a grade for all assignments in the given category categories. Formatted as a percentage.
+	 * Determine a grade for all assignments in the given category categories. Formatted as a percentage. Returns null if not available
 	 *
 	 * @param gradebookUid
 	 * @param userId
 	 * @param cd
 	 * @return
 	 */
-	private String getGradeForCategory(String gradebookUid, String userId, CategoryDefinition cd) {
+	private String getDisplayGradeForCategory(String gradebookUid, String userId, CategoryDefinition cd) {
 		
 		List<Assignment> assignmentsInCategory = cd.getAssignmentList();
 		double userPoints = 0;
 		double totalPoints = 0;
 
 		for(Assignment a: assignmentsInCategory) {
-			userPoints += Double.valueOf(gradebookService.getAssignmentScoreString(gradebookUid, a.getId(), userId));
+			try {
+				userPoints += Double.valueOf(gradebookService.getAssignmentScoreString(gradebookUid, a.getId(), userId));
+			} catch (Exception e) {
+				return null; //not yet entered
+			}
 			totalPoints += a.getPoints();
 		}
 		
