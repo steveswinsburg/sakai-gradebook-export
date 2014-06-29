@@ -64,6 +64,8 @@ public class GradebookExportByTerm implements Job {
 	private final String JOB_NAME = "GradebookExportByTerm";
 	private final long COURSE_GRADE_ASSIGNMENT_ID = -1; // because no gradeable object in Sakai should have this value
 	private final long TOTAL_POINTS_EARNED = -2; // see above
+	private final long TOTAL_POINTS_POSSIBLE = -3; // see above
+
 	
 	// do all of the work
 	// this has been combined into one method. It's a lot of code but it reduces additional lookups and duplication of code, refactor if time allows
@@ -131,10 +133,7 @@ public class GradebookExportByTerm implements Job {
 	        
 	        //get any categories
 			List<CategoryDefinition> categoryDefinitions = gradebookService.getCategoryDefinitions(siteId);
-
-			//get a count of the total points possible for all assignments
-			String totalPointsPossible = getTotalPointsPossible(assignments);
-	        
+			   
 			//for each user, get the assignment results for each assignment, with TPE and course grade at the end
 			for(User u: users) {
 				
@@ -163,6 +162,9 @@ public class GradebookExportByTerm implements Job {
 				
 				//add total points earned
 				g.addGrade(TOTAL_POINTS_EARNED, this.getTotalPointsEarned(gradebook.getUid(), u.getId(), assignments));
+				
+				//add total points possible
+				g.addGrade(TOTAL_POINTS_POSSIBLE, this.getTotalPointsPossible(gradebook.getUid(), u.getId(), assignments));				
 				
 				//add the course grade. Note the map has eids.
 				g.addGrade(COURSE_GRADE_ASSIGNMENT_ID, courseGrades.get(u.getEid()));
@@ -252,7 +254,7 @@ public class GradebookExportByTerm implements Job {
 						}
 						
 						//add total points earned and possible
-						row.add(g.get(TOTAL_POINTS_EARNED) + " [" + totalPointsPossible + "]");
+						row.add(g.get(TOTAL_POINTS_EARNED) + " [" + g.get(TOTAL_POINTS_POSSIBLE) + "]");
 						
 						//add course grade
 						row.add(g.get(COURSE_GRADE_ASSIGNMENT_ID));
@@ -424,18 +426,28 @@ public class GradebookExportByTerm implements Job {
 	
 	/**
 	 * Helper to get the total number of points possible for all assignments
+	 * Takes into account participation, ie student must have attempted the assignment (indicated by having a grade) for it to be included.
+	 * Also, EXCLUDES extra credit items.
+	 * 
+	 * @param gradebookUid
+	 * @param userId
 	 * @param assignments
 	 * @return
 	 */
-	private String getTotalPointsPossible(List<Assignment> assignments) {
+	private String getTotalPointsPossible(String gradebookUid, String userId, List<Assignment> assignments) {
 		double totalPointsPossible = 0;
 		
 		for(Assignment a: assignments) {
-			//if(a.isCounted()){
+			
+			if(a.isExtraCredit()){
+				continue;
+			}			
+			
+			if(StringUtils.isNotBlank(gradebookService.getAssignmentScoreString(gradebookUid, a.getId(), userId))){
 				totalPointsPossible += a.getPoints();
-			//}
+			}
 		}
-		
+				
 		return String.valueOf(totalPointsPossible);
 	}
 	
