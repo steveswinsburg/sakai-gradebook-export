@@ -207,12 +207,11 @@ public class GradebookExportByTerm implements Job {
 						header.add("Comments");
 					}
 					
-					//add the category headers
+					//add the category header (category name  + weighting percentage)
 					for(CategoryDefinition cd: categoryDefinitions) {
 						Double weight = cd.getWeight();
-						if(weight != null) {
-							header.add(cd.getName() + " [" + toPercentage(cd.getWeight(), 3) + "]"); //display as percentage. it's stored as a fraction  ie 0.1 for 10%
-						
+						if(weight != null && weight != 0) {
+							header.add(cd.getName() + " [" + fractionToPercentage(weight, 3) + "]"); //display as percentage. it's stored as a fraction  ie 0.1 for 10%
 						} else {
 							header.add(cd.getName());
 						}
@@ -476,12 +475,12 @@ public class GradebookExportByTerm implements Job {
 	}
 	
 	/**
-	 * Format a double into a percentage string
+	 * Format a fraction double into a percentage string
 	 * @param d double number. 0-3 decimal places as per gradebook allows
 	 * @param precision. number of decimal places
 	 * @return 12% string
 	 */
-	private String toPercentage(double d, int precision) {
+	private String fractionToPercentage(double d, int precision) {
 		int maxPrecision = 3;
 		if(precision > maxPrecision) {
 			precision = maxPrecision;
@@ -495,7 +494,8 @@ public class GradebookExportByTerm implements Job {
 	
 	/**
 	 * Determine a grade for all assignments in the given category categories. Formatted as a percentage. Returns null if not available
-	 *
+	 * Only takes into account those there there was an attempt.
+	 * 
 	 * @param gradebookUid
 	 * @param userId
 	 * @param cd
@@ -509,14 +509,22 @@ public class GradebookExportByTerm implements Job {
 
 		for(Assignment a: assignmentsInCategory) {
 			try {
-				userPoints += Double.valueOf(gradebookService.getAssignmentScoreString(gradebookUid, a.getId(), userId));
+				String scoreString = gradebookService.getAssignmentScoreString(gradebookUid, a.getId(), userId);
+				if(StringUtils.isNotBlank(scoreString)) {
+					userPoints += Double.valueOf(scoreString); //only add if student attempted
+					totalPoints += a.getPoints(); //only add if student attempted
+				}
 			} catch (Exception e) {
-				return null; //not yet entered
+				//skip to next
 			}
-			totalPoints += a.getPoints();
 		}
-		
-		String percentage = toPercentage(userPoints / totalPoints, 1);
+	
+		//cater for totalPoints=0, where student hasn't attempted anything in category
+		double fraction = 0;
+		if(totalPoints != 0) {
+			fraction = userPoints / totalPoints;
+		}
+		String percentage = fractionToPercentage(fraction, 1);
 		
 		return percentage;
 	}
