@@ -467,7 +467,7 @@ public class GradebookExportByTerm implements Job {
 			try {
 				totalPointsEarned += Double.valueOf(gradebookService.getAssignmentScoreString(gradebookUid, a.getId(), userId));
 			} catch (Exception e) {
-				return "N/A"; //not yet entered
+				//skip to next, nothing entered for this assignment
 			}
 		}
 		
