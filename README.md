@@ -12,7 +12,7 @@ mvn clean install sakai:deploy -Dmaven.tomcat.home=/path/to/tomcat
 
 In ``sakai.properties`` set the following options:
 
-The [ath where the exported CSV files will be saved:
+The path where the exported CSV files will be saved:
 ```
 gradebook.export.path=/Users/steve/Desktop
 ```
