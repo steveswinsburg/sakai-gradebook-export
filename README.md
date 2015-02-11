@@ -21,3 +21,6 @@ The sites matching this academic term will be exported. Leave this blank to use 
 ```
 gradebook.export.term=2013
 ```
+
+
+_Code development sponsored by Longsight (www.longsight.com)_
