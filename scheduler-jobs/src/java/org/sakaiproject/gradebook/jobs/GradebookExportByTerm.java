@@ -3,7 +3,6 @@ package org.sakaiproject.gradebook.jobs;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.math.BigDecimal;
 import java.text.NumberFormat;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -14,7 +13,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.TreeSet;
 
 import lombok.Setter;
 import lombok.extern.apachecommons.CommonsLog;
@@ -115,7 +113,7 @@ public class GradebookExportByTerm implements Job {
 			log.debug("Assignments size: " + assignments.size());
 
 			//get course grades and use entered grades preferentially, if they exist
-	        Map<String, String> courseGrades = gradebookService.getCalculatedCourseGrade(gradebook.getUid()); 
+	        Map<String, String> courseGrades = gradebookService.getImportCourseGrade(gradebook.getUid()); 
 	        Map<String, String> enteredGrades = gradebookService.getEnteredCourseGrade(gradebook.getUid());
 	          
 	        Iterator<String> gradeOverrides = enteredGrades.keySet().iterator();
@@ -274,6 +272,11 @@ public class GradebookExportByTerm implements Job {
 						mappings.add(key + "=" + baseMap.get(key));
 					}
 					csv.addRow(new String[]{ "Mappings: " + StringUtils.join(mappings, ',')});
+					
+					//add site info rows
+					csv.addRow(new String[]{ "Site ID: " + s.getId()});
+					csv.addRow(new String[]{ "Site Title: " + s.getTitle()});
+
 
 					//write header
 					writer.writeNext(csv.getHeader());
