@@ -112,22 +112,8 @@ public class GradebookExportByTerm implements Job {
 			}
 			log.debug("Assignments size: " + assignments.size());
 
-			//get course grades and use entered grades preferentially, if they exist
+			//get course grades. This uses entered grades preferentially
 	        Map<String, String> courseGrades = gradebookService.getImportCourseGrade(gradebook.getUid()); 
-	        Map<String, String> enteredGrades = gradebookService.getEnteredCourseGrade(gradebook.getUid());
-	          
-	        Iterator<String> gradeOverrides = enteredGrades.keySet().iterator();
-	        while(gradeOverrides.hasNext()) {
-	        	String username = gradeOverrides.next();
-	        	String override = enteredGrades.get(username);
-	        	
-	        	log.debug("username: " + username);
-	        	log.debug("override: " + override);
-	        	
-	        	if(StringUtils.isNotBlank(override)) {
-	        		courseGrades.put(username, override);
-	        	}
-	        }
 	        
 	        //get any categories
 			List<CategoryDefinition> categoryDefinitions = gradebookService.getCategoryDefinitions(siteId);
