@@ -247,7 +247,14 @@ public class GradebookExportByTerm implements Job {
 						csv.addRow(row.toArray(new String[row.size()]));
 					}
 					
-					//add a row to show the grade mapping (sorted via the value)
+					//spacer row. Extra stuff to follow
+					csv.addRow(new String[]{});
+					
+					//add site info rows (2 columns)
+					csv.addRow(new String[]{ "Site ID", s.getId()});
+					csv.addRow(new String[]{ "Site Title", s.getTitle()});
+					
+					//add a row to show the grade mapping (sorted via the value) (2 columns)
 					Map<String,Double> baseMap = gradebook.getSelectedGradeMapping().getGradeMap();
 			        ValueComparator gradeMappingsComparator = new ValueComparator(baseMap);
 			        TreeMap<String,Double> sortedGradeMappings = new TreeMap<String,Double>(gradeMappingsComparator);
@@ -257,17 +264,11 @@ public class GradebookExportByTerm implements Job {
 					for(String key: sortedGradeMappings.keySet()) {
 						mappings.add(key + "=" + baseMap.get(key));
 					}
-					csv.addRow(new String[]{ "Mappings: " + StringUtils.join(mappings, ',')});
+					csv.addRow(new String[]{ "Mappings", StringUtils.join(mappings, ',')});
 					
-					//add site info rows
-					csv.addRow(new String[]{ "Site ID: " + s.getId()});
-					csv.addRow(new String[]{ "Site Title: " + s.getTitle()});
-
-
-					//write header
+					//write it all out
 					writer.writeNext(csv.getHeader());
 					writer.writeAll(csv.getRows());
-					
 					writer.close();
 					
 					log.info("Successfully wrote CSV to: " + file);
