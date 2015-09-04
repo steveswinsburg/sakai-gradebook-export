@@ -265,24 +265,30 @@ public class GradebookExportByTerm implements Job {
 						mappings.add(key + "=" + baseMap.get(key));
 					}
 					
-					
 					// Informational rows. Need to fill out the rows for CSV consistency
-					String[] spacerRow = new String[headerSize];
-					String[] siteIdRow = new String[]{ "Site ID", s.getId()};;
-					String[] siteTitleRow = new String[]{ "Site Title", s.getTitle()};
-					String[] mappingRow = new String[]{ "Mappings", StringUtils.join(mappings, ',')};
+					List<String> spacerRow = new ArrayList<String>();
+					List<String> siteIdRow = new ArrayList<String>();
+					List<String> siteTitleRow = new ArrayList<String>();
+					List<String> mappingRow = new ArrayList<String>();
+					
+					siteIdRow.add("Site ID");
+					siteIdRow.add(s.getId());
+					siteTitleRow.add("Site Title");
+					siteTitleRow.add(s.getTitle());
+					mappingRow.add("Mappings");
+					mappingRow.add(StringUtils.join(mappings, ','));
 					
 					for (int i = 0; i < headerSize; i++) {
-						if (spacerRow[i] == null) spacerRow[i] = "";
-						if (siteIdRow[i] == null) siteIdRow[i] = "";
-						if (siteTitleRow[i] == null) siteTitleRow[i] = "";
-						if (mappingRow[i] == null) mappingRow[i] = "";
+						if (spacerRow.size() < headerSize) spacerRow.add("");
+						if (siteIdRow.size() < headerSize) siteIdRow.add("");
+						if (siteTitleRow.size() < headerSize) siteTitleRow.add("");
+						if (mappingRow.size() < headerSize) mappingRow.add("");
 					}
 
-					csv.addRow(spacerRow);
-					csv.addRow(siteIdRow);
-					csv.addRow(siteTitleRow);
-					csv.addRow(mappingRow);
+					csv.addRow(spacerRow.toArray(new String[spacerRow.size()]));
+					csv.addRow(siteIdRow.toArray(new String[siteIdRow.size()]));
+					csv.addRow(siteTitleRow.toArray(new String[siteTitleRow.size()]));
+					csv.addRow(mappingRow.toArray(new String[mappingRow.size()]));
 					
 					//write it all out
 					writer.writeNext(csv.getHeader());
