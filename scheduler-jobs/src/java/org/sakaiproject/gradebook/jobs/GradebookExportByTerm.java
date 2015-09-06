@@ -8,7 +8,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -47,7 +46,7 @@ import org.sakaiproject.tool.gradebook.Gradebook;
 import org.sakaiproject.user.api.User;
 import org.sakaiproject.user.api.UserDirectoryService;
 
-import au.com.bytecode.opencsv.CSVWriter;
+import com.opencsv.CSVWriter;
 
 
 /**
@@ -205,13 +204,16 @@ public class GradebookExportByTerm implements Job {
 					header.add("Total Points Earned [Points Possible]");
 					header.add("Course Grade");
 					
-					csv.setHeader(header.toArray(new String[header.size()]));
+					// Make sure all row sizes are consistent
+					int headerSize = header.size();
+					
+					csv.setHeader(header.toArray(new String[headerSize]));
 					
 					//create a formatted list of data using the grade records info and user info, using the order of the assignment list
 					//this puts it in the order we need for the CSV
 					for(StudentGrades sg: grades) {
 						
-						List<String> row = new ArrayList<String>();
+						List<String> row = new ArrayList<String>(headerSize);
 						
 						//add name details
 						row.add(sg.getUserEid());
@@ -242,17 +244,15 @@ public class GradebookExportByTerm implements Job {
 						//add course grade
 						row.add(g.get(COURSE_GRADE_ASSIGNMENT_ID));
 						
+						// Make sure row is same size as header
+						if (row.size() != headerSize) {
+							log.error("Row not same size as header: " + row.size () + " vs header size of " + headerSize);
+						}
+						
 						log.debug("Row: " + row);
 
 						csv.addRow(row.toArray(new String[row.size()]));
 					}
-					
-					//spacer row. Extra stuff to follow
-					csv.addRow(new String[]{});
-					
-					//add site info rows (2 columns)
-					csv.addRow(new String[]{ "Site ID", s.getId()});
-					csv.addRow(new String[]{ "Site Title", s.getTitle()});
 					
 					//add a row to show the grade mapping (sorted via the value) (2 columns)
 					Map<String,Double> baseMap = gradebook.getSelectedGradeMapping().getGradeMap();
@@ -264,7 +264,31 @@ public class GradebookExportByTerm implements Job {
 					for(String key: sortedGradeMappings.keySet()) {
 						mappings.add(key + "=" + baseMap.get(key));
 					}
-					csv.addRow(new String[]{ "Mappings", StringUtils.join(mappings, ',')});
+					
+					// Informational rows. Need to fill out the rows for CSV consistency
+					List<String> spacerRow = new ArrayList<String>();
+					List<String> siteIdRow = new ArrayList<String>();
+					List<String> siteTitleRow = new ArrayList<String>();
+					List<String> mappingRow = new ArrayList<String>();
+					
+					siteIdRow.add("Site ID");
+					siteIdRow.add(s.getId());
+					siteTitleRow.add("Site Title");
+					siteTitleRow.add(s.getTitle());
+					mappingRow.add("Mappings");
+					mappingRow.add(StringUtils.join(mappings, ','));
+					
+					for (int i = 0; i < headerSize; i++) {
+						if (spacerRow.size() < headerSize) spacerRow.add("");
+						if (siteIdRow.size() < headerSize) siteIdRow.add("");
+						if (siteTitleRow.size() < headerSize) siteTitleRow.add("");
+						if (mappingRow.size() < headerSize) mappingRow.add("");
+					}
+
+					csv.addRow(spacerRow.toArray(new String[spacerRow.size()]));
+					csv.addRow(siteIdRow.toArray(new String[siteIdRow.size()]));
+					csv.addRow(siteTitleRow.toArray(new String[siteTitleRow.size()]));
+					csv.addRow(mappingRow.toArray(new String[mappingRow.size()]));
 					
 					//write it all out
 					writer.writeNext(csv.getHeader());
